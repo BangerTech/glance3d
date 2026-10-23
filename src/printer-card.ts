@@ -1,6 +1,7 @@
 import { LitElement, html, svg, css, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { emptyStatus, type PrinterStatus } from "./moonraker";
+import type { AmsSlot } from "./backend";
 
 @customElement("printer-card")
 export class PrinterCard extends LitElement {
@@ -563,6 +564,40 @@ export class PrinterCard extends LitElement {
       opacity: 0.3;
       cursor: not-allowed;
     }
+    /* AMS strip (Bambu) */
+    .ams-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin: 6px 0 8px;
+    }
+    .ams-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 7px 3px 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 10px;
+      line-height: 1;
+      color: rgba(255, 255, 255, 0.75);
+    }
+    .ams-chip.active {
+      background: rgba(59, 130, 246, 0.18);
+      border-color: rgba(59, 130, 246, 0.6);
+      color: #fff;
+    }
+    .ams-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+    .ams-label small {
+      opacity: 0.6;
+      margin-left: 2px;
+    }
     @keyframes pulse {
       0%,
       100% {
@@ -661,6 +696,8 @@ export class PrinterCard extends LitElement {
           <div class="overlay-left">${this.renderFans(s)}</div>
           <div class="overlay-right">${this.renderTemps(s)}</div>
         </div>
+
+        ${this.renderAms(s.ams)}
 
         <div class="stats-row">
           <div class="stat-group">
@@ -786,6 +823,29 @@ export class PrinterCard extends LitElement {
             </div>
           </div>`
         : nothing}
+    `;
+  }
+
+  private renderAms(ams: AmsSlot[] | null): TemplateResult | typeof nothing {
+    if (!ams || ams.length === 0) return nothing;
+    return html`
+      <div class="ams-row">
+        ${ams.map(
+          (slot) => html`
+            <div class="ams-chip ${slot.active ? "active" : ""}">
+              <span
+                class="ams-dot"
+                style=${`background:${slot.color ?? "rgba(255,255,255,0.2)"}`}
+              ></span>
+              <span class="ams-label"
+                >${slot.material ?? "–"}${slot.remaining !== null
+                  ? html` <small>${slot.remaining}%</small>`
+                  : nothing}</span
+              >
+            </div>
+          `
+        )}
+      </div>
     `;
   }
 

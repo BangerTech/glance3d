@@ -10,45 +10,16 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type {
+  KlippyState,
+  PrinterBackend,
+  PrinterStatus,
+  Webcam,
+} from "./backend";
 
-export type KlippyState =
-  | "ready"
-  | "startup"
-  | "shutdown"
-  | "error"
-  | "disconnected";
-
-export interface PrinterStatus {
-  wsConnected: boolean;
-  klippy: KlippyState;
-  /** Raw print_stats.state: standby | printing | paused | complete | cancelled | error */
-  printState: string;
-  filename: string;
-  progress: number; // 0..1
-  nozzleTemp: number;
-  nozzleTarget: number;
-  bedTemp: number;
-  bedTarget: number;
-  chamberTemp: number | null;
-  currentLayer: number | null;
-  totalLayers: number | null;
-  printDuration: number; // seconds
-  totalDuration: number; // seconds
-  etaSeconds: number | null;
-  light: boolean | null;
-  filamentDetected: boolean | null;
-  modelFan: number | null; // part/model cooling fan, 0..100
-  auxFan: number | null; // side/aux fan, 0..100
-  caseFan: number | null; // case/enclosure fan, 0..100
-}
-
-export interface Webcam {
-  name: string;
-  /** Raw stream_url from Moonraker (may be relative, e.g. "/webcam/?action=stream"). */
-  stream: string;
-  /** Raw snapshot_url from Moonraker (may be relative). */
-  snapshot: string;
-}
+// Re-export so existing imports in main.ts / printer-card.ts keep working.
+export type { KlippyState, PrinterStatus, Webcam } from "./backend";
+export { emptyStatus } from "./backend";
 
 const SUBSCRIBE_OBJECTS: Record<string, null> = {
   print_stats: null,
@@ -74,7 +45,7 @@ interface Pending {
   reject: (reason?: any) => void;
 }
 
-export class MoonrakerClient {
+export class MoonrakerClient implements PrinterBackend {
   private host: string;
   private port: number;
   private nextId = 1;
@@ -451,6 +422,9 @@ export class MoonrakerClient {
       modelFan: fanPercent(fan0),
       auxFan: fanPercent(fan1),
       caseFan: fanPercent(fan2),
+      // Moonraker/Klipper doesn't expose a "substage" or AMS by default.
+      stage: null,
+      ams: null,
     };
   }
 }
@@ -462,29 +436,4 @@ function fanPercent(obj: any): number | null {
 
 function num(v: unknown): number {
   return typeof v === "number" ? v : 0;
-}
-
-export function emptyStatus(): PrinterStatus {
-  return {
-    wsConnected: false,
-    klippy: "disconnected",
-    printState: "standby",
-    filename: "",
-    progress: 0,
-    nozzleTemp: 0,
-    nozzleTarget: 0,
-    bedTemp: 0,
-    bedTarget: 0,
-    chamberTemp: null,
-    currentLayer: null,
-    totalLayers: null,
-    printDuration: 0,
-    totalDuration: 0,
-    etaSeconds: null,
-    light: null,
-    filamentDetected: null,
-    modelFan: null,
-    auxFan: null,
-    caseFan: null,
-  };
 }

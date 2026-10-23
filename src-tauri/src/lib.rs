@@ -1,3 +1,4 @@
+mod bambu;
 mod ws;
 
 use tauri::Manager;
@@ -19,12 +20,16 @@ pub fn run() {
     builder
         .setup(|app| {
             app.manage(ws::init());
+            app.manage(bambu::init());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ws::ws_connect,
             ws::ws_send,
-            ws::ws_disconnect
+            ws::ws_disconnect,
+            bambu::bambu_connect,
+            bambu::bambu_send,
+            bambu::bambu_disconnect
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
