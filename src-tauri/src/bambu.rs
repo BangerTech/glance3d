@@ -22,8 +22,9 @@ use rumqttc::{
 };
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{ClientConfig as RustlsClientConfig, DigitallySignedStruct, SignatureScheme};
+use rustls::{CertificateError, ClientConfig as RustlsClientConfig, DigitallySignedStruct, SignatureScheme};
 use tauri::{Emitter, State, WebviewWindow};
+use x509_parser::prelude::*;
 
 #[derive(Default)]
 pub struct BambuState {
@@ -43,22 +44,108 @@ pub fn init() -> BambuState {
     BambuState::default()
 }
 
-// --- TLS: accept the printer's self-signed cert ---
+// --- TLS: trust the printer when its cert is a Bambu-issued device cert
+// named after the configured serial ---
+
+// Bambu's roots and per-model CAs, shipped with the app (MIT, from
+// rolottr/bambu-bar's Resources/Certificates).
+const BAMBU_CA_PEM: &[u8] = include_bytes!("../certs/bambu-ca.pem");
+const BAMBU_N6_PEM: &[u8] = include_bytes!("../certs/bambu-n6.pem");
+const BAMBU_N7_PEM: &[u8] = include_bytes!("../certs/bambu-n7.pem");
+const BAMBU_O1C2_PEM: &[u8] = include_bytes!("../certs/bambu-o1c2.pem");
+
+/// Set to `true` at compile time to bypass CA / CN checks (e.g. when hitting
+/// a simulator with a self-signed cert). Off by default.
+const INSECURE_FALLBACK: bool = false;
+
+fn load_bambu_subjects() -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    for pem in [BAMBU_CA_PEM, BAMBU_N6_PEM, BAMBU_N7_PEM, BAMBU_O1C2_PEM] {
+        let mut cursor = std::io::Cursor::new(pem);
+        for item in rustls_pemfile::certs(&mut cursor) {
+            if let Ok(der) = item {
+                if let Ok((_, cert)) = X509Certificate::from_der(&der) {
+                    out.push(cert.subject().as_raw().to_vec());
+                }
+            }
+        }
+    }
+    out
+}
 
 #[derive(Debug)]
-struct NoVerifier;
+struct BambuVerifier {
+    bambu_ca_subjects: Vec<Vec<u8>>,
+    expected_serial: String,
+    insecure: bool,
+}
 
-impl ServerCertVerifier for NoVerifier {
+impl ServerCertVerifier for BambuVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName<'_>,
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        // Decode the leaf: extract CN and remember its issuer for the chain check.
+        let (_, leaf) = X509Certificate::from_der(end_entity.as_ref())
+            .map_err(|_| rustls::Error::InvalidCertificate(CertificateError::BadEncoding))?;
+        let cn = leaf
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|a| a.as_str().ok())
+            .map(str::to_string)
+            .unwrap_or_default();
+
+        // The printer presents a cert whose CN is its serial. This both proves
+        // we're talking to *this* printer (someone else's Bambu device nearby
+        // cannot pretend to be it and collect our access code) and tells us
+        // which device we're connected to.
+        if !cn.eq_ignore_ascii_case(&self.expected_serial) {
+            if !self.insecure {
+                eprintln!(
+                    "bambu TLS: leaf CN {:?} does not match configured serial {:?}",
+                    cn, self.expected_serial
+                );
+                return Err(rustls::Error::InvalidCertificate(
+                    CertificateError::NotValidForName,
+                ));
+            } else {
+                eprintln!(
+                    "bambu TLS (insecure): accepting CN mismatch {:?} vs {:?}",
+                    cn, self.expected_serial
+                );
+            }
+        }
+
+        // Chain-root check: at least one cert in the presented chain must be
+        // issued by one of our bundled Bambu CAs (by DN). This is a weaker
+        // check than full PKI validation — we don't verify signatures here —
+        // but it's a meaningful step up from accepting any cert for a LAN
+        // printer, and matches what bambu-bar does on macOS.
+        let mut issuers: Vec<Vec<u8>> = Vec::with_capacity(1 + intermediates.len());
+        issuers.push(leaf.issuer().as_raw().to_vec());
+        for der in intermediates {
+            if let Ok((_, c)) = X509Certificate::from_der(der.as_ref()) {
+                issuers.push(c.issuer().as_raw().to_vec());
+            }
+        }
+        let chain_ok = issuers
+            .iter()
+            .any(|iss| self.bambu_ca_subjects.iter().any(|s| s == iss));
+        if !chain_ok && !self.insecure {
+            eprintln!("bambu TLS: chain does not terminate at a bundled Bambu CA");
+            return Err(rustls::Error::InvalidCertificate(
+                CertificateError::UnknownIssuer,
+            ));
+        }
+
         Ok(ServerCertVerified::assertion())
     }
+
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
@@ -91,10 +178,15 @@ impl ServerCertVerifier for NoVerifier {
     }
 }
 
-fn insecure_rustls_config() -> Arc<RustlsClientConfig> {
+fn bambu_rustls_config(expected_serial: String) -> Arc<RustlsClientConfig> {
+    let verifier = BambuVerifier {
+        bambu_ca_subjects: load_bambu_subjects(),
+        expected_serial,
+        insecure: INSECURE_FALLBACK,
+    };
     let config = RustlsClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
     Arc::new(config)
 }
@@ -133,7 +225,7 @@ pub async fn bambu_connect(
     );
     opts.set_credentials("bblp", access_code);
     opts.set_transport(Transport::Tls(TlsConfiguration::Rustls(
-        insecure_rustls_config(),
+        bambu_rustls_config(serial.clone()),
     )));
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);

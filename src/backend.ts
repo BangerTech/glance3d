@@ -1,7 +1,10 @@
 // Shared types for printer backends (Moonraker + Bambu).
 //
 // Both backend clients normalize printer state into a single `PrinterStatus`
-// shape, so the <printer-card> UI doesn't care which protocol fed it.
+// shape, so the <printer-card> UI doesn't care which protocol fed it. The
+// extended Bambu fields (grouped AMS, grams, named colors, speed, issues,
+// model, mounted hotend) are additive/optional; Moonraker simply leaves them
+// null and the card renders nothing for them.
 
 export type KlippyState =
   | "ready"
@@ -10,18 +13,99 @@ export type KlippyState =
   | "error"
   | "disconnected";
 
+// ---- AMS / spool model (Bambu) --------------------------------------------
+
+/** AMS variant Bambu Studio distinguishes by the `info` nibble / module id. */
+export type AmsKind = "ams" | "lite" | "pro2" | "ht" | "ams3h" | "amsB";
+
+/**
+ * A single filament slot: an AMS tray or the external spool holder.
+ *
+ * `id` is the global slot id used by the printer (`unit * 4 + slot` for
+ * four-slot units, `128 + n` for AMS HT, `1024 + slot` for the H3C's AMS 3H,
+ * `1056 + slot` for AMS-B, and 254 for the external spool).
+ */
 export interface AmsSlot {
+  id: number;
+  unit: number;
   /** 0-based tray index within its AMS unit. */
-  index: number;
-  /** Hex color like "#ff8800", or null if empty / unknown. */
-  color: string | null;
-  /** Material tag like "PLA" / "PETG". */
+  slot: number;
+  /** Material tag like "PLA" / "PETG"; empty when the slot is empty. */
   material: string | null;
+  /** Full product name ("PLA Matte"); null for third-party spools. */
+  name: string | null;
+  /** Hex color like "#ff8800" (may include alpha); null if unknown. */
+  color: string | null;
+  /** Additional colors for multi-color spools (may be empty). */
+  colors: string[];
+  /** Remaining material 0..100, if the AMS reports it. */
+  remain: number | null;
+  /** Net filament weight of a full spool in grams (from the RFID tag). */
+  weight: number | null;
+  /** Grams left (`weight * remain / 100`), null when either input is unknown. */
+  gramsLeft: number | null;
   /** True if this tray is currently feeding the hotend. */
   active: boolean;
-  /** Remaining material 0..100, if the AMS reports it. */
-  remaining: number | null;
+  /** True if the slot has filament loaded. */
+  isLoaded: boolean;
+  /** True if the spool has a Bambu Lab RFID tag. */
+  isBambu: boolean;
+  /** Bambu Studio preset id like "GFA01", or null. */
+  preset: string | null;
+  /** Brand name ("Bambu Lab" for RFID, else from preset). */
+  brand: string | null;
+  /** Bambu's own color name ("Grass Green") when known. */
+  colorName: string | null;
+  /** Lowest nozzle temperature the filament is rated for. */
+  nozzleTempMin: number | null;
+  /** Highest nozzle temperature the filament is rated for. */
+  nozzleTempMax: number | null;
+  /** Human-readable slot label: "A1", "HT1", "Ext", or "1" for AMS 3H. */
+  label: string;
 }
+
+/** One AMS unit (four-slot AMS, AMS Lite, AMS HT, AMS 3H, AMS-B). */
+export interface AmsUnit {
+  id: number;
+  kind: AmsKind;
+  /** Display title ("AMS A", "AMS 3H", "AMS HT1"). */
+  title: string;
+  /** Relative humidity (percent), null if unsupported. */
+  humidity: number | null;
+  /** 1 (dry) to 5 (wet), Bambu Studio's inverted scale. Null if unsupported. */
+  humidityLevel: number | null;
+  /** Unit temperature in °C; null if unsupported (Lite). */
+  temperature: number | null;
+  /** Remaining drying minutes; 0 when not drying. */
+  dryingMinutesLeft: number;
+  slots: AmsSlot[];
+}
+
+// ---- Issues ---------------------------------------------------------------
+
+export type IssueSeverity = "fatal" | "serious" | "common" | "info";
+
+export interface PrinterIssue {
+  /** HMS code like "HMS_0300_0100_0001_0007" or print_error "0700_8006". */
+  id: string;
+  severity: IssueSeverity;
+  message: string;
+  wikiURL: string | null;
+}
+
+// ---- Model ----------------------------------------------------------------
+
+export interface PrinterModelInfo {
+  /** Bambu's model id ("N10", "BL-P001", ...). */
+  code: string;
+  /** Marketing name ("H3C", "X1 Carbon", ...). */
+  name: string;
+}
+
+/** Bambu print-speed profile (`spd_lvl`). */
+export type SpeedLevel = 1 | 2 | 3 | 4;
+
+// ---- Normalized status ----------------------------------------------------
 
 export interface PrinterStatus {
   wsConnected: boolean;
@@ -35,6 +119,8 @@ export interface PrinterStatus {
   bedTemp: number;
   bedTarget: number;
   chamberTemp: number | null;
+  /** Active chamber heater target (°C) on models that heat the chamber. */
+  chamberTarget: number | null;
   currentLayer: number | null;
   totalLayers: number | null;
   printDuration: number; // seconds (0 if unknown)
@@ -45,10 +131,26 @@ export interface PrinterStatus {
   modelFan: number | null; // 0..100
   auxFan: number | null;
   caseFan: number | null;
-  /** Bambu printing substage ("heating bed", "auto-leveling", ...). */
+  /** Bambu printing substage, resolved to readable text when possible. */
   stage: string | null;
-  /** AMS/CFS trays (Bambu); null means not applicable. */
-  ams: AmsSlot[] | null;
+  /** Numeric stage id (Bambu `stg_cur`), or null. */
+  stageId: number | null;
+  /** AMS/CFS units (Bambu); null means not applicable (e.g. Moonraker). */
+  ams: AmsUnit[] | null;
+  /** External-spool holder as a pseudo slot, when present. */
+  externalSpool: AmsSlot | null;
+  /** Global id of the slot feeding the hotend right now, if known. */
+  activeSpoolId: number | null;
+  /** Current print-speed profile (Bambu), null when unknown. */
+  speed: SpeedLevel | null;
+  /** Bambu HMS + print_error issues. */
+  issues: PrinterIssue[];
+  /** Detected Bambu model (null for Moonraker or unknown). */
+  model: PrinterModelInfo | null;
+  /** The hotend mounted on the active extruder (H3C rack), e.g. "0.4 mm H". */
+  toolMounted: string | null;
+  /** Firmware version string, when reported. */
+  firmware: string | null;
 }
 
 export interface Webcam {
@@ -71,6 +173,7 @@ export function emptyStatus(): PrinterStatus {
     bedTemp: 0,
     bedTarget: 0,
     chamberTemp: null,
+    chamberTarget: null,
     currentLayer: null,
     totalLayers: null,
     printDuration: 0,
@@ -82,7 +185,15 @@ export function emptyStatus(): PrinterStatus {
     auxFan: null,
     caseFan: null,
     stage: null,
+    stageId: null,
     ams: null,
+    externalSpool: null,
+    activeSpoolId: null,
+    speed: null,
+    issues: [],
+    model: null,
+    toolMounted: null,
+    firmware: null,
   };
 }
 
@@ -107,6 +218,8 @@ export interface PrinterBackend {
   cancel(): Promise<unknown>;
   home(): Promise<unknown>;
   setLight(on: boolean): Promise<unknown>;
+  /** Bambu print-speed profile. Moonraker ignores this. */
+  setSpeed?(level: SpeedLevel): Promise<unknown>;
 
   // Optional capabilities.
   getWebcam(): Promise<Webcam | null>;

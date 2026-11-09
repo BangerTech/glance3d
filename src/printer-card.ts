@@ -1,7 +1,7 @@
 import { LitElement, html, svg, css, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { emptyStatus, type PrinterStatus } from "./moonraker";
-import type { AmsSlot } from "./backend";
+import type { AmsUnit } from "./backend";
 
 @customElement("printer-card")
 export class PrinterCard extends LitElement {
@@ -565,11 +565,102 @@ export class PrinterCard extends LitElement {
       cursor: not-allowed;
     }
     /* AMS strip (Bambu) */
+    .ams-unit {
+      margin: 4px 0;
+    }
+    .ams-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: rgba(255, 255, 255, 0.45);
+      margin-bottom: 4px;
+    }
+    .ams-humidity {
+      display: inline-flex;
+      gap: 2px;
+      padding: 1px 4px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.75);
+      font-weight: 600;
+      font-size: 9px;
+    }
     .ams-row {
       display: flex;
       gap: 4px;
       flex-wrap: wrap;
-      margin: 6px 0 8px;
+      margin: 0 0 6px;
+    }
+    /* Issue banner (Bambu HMS + print_error) */
+    .issue-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      border: 1px solid transparent;
+    }
+    .issue-banner.fatal {
+      background: rgba(239, 68, 68, 0.14);
+      border-color: rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
+    }
+    .issue-banner.serious {
+      background: rgba(251, 191, 36, 0.14);
+      border-color: rgba(251, 191, 36, 0.45);
+      color: #fde68a;
+    }
+    .issue-banner.common,
+    .issue-banner.info {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #93c5fd;
+    }
+    .issue-banner .msg {
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    /* Speed selector (Bambu) */
+    .speed-row {
+      display: flex;
+      gap: 6px;
+      margin: 0 0 10px;
+      justify-content: space-between;
+    }
+    .speed-btn {
+      flex: 1;
+      padding: 5px 0;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .speed-btn:hover {
+      color: rgba(255, 255, 255, 0.85);
+    }
+    .speed-btn.active {
+      background: rgba(0, 150, 255, 0.18);
+      border-color: rgba(0, 150, 255, 0.55);
+      color: #4db8ff;
+    }
+    .tool-mounted {
+      font-size: 9px;
+      font-weight: 600;
+      opacity: 0.55;
+      margin-top: 2px;
     }
     .ams-chip {
       display: flex;
@@ -697,7 +788,9 @@ export class PrinterCard extends LitElement {
           <div class="overlay-right">${this.renderTemps(s)}</div>
         </div>
 
+        ${this.renderIssue(s)}
         ${this.renderAms(s.ams)}
+        ${this.renderSpeed(s)}
 
         <div class="stats-row">
           <div class="stat-group">
@@ -801,6 +894,9 @@ export class PrinterCard extends LitElement {
             ></span
           >
           <span class="pill-label">Nozzle</span>
+          ${s.toolMounted
+            ? html`<span class="tool-mounted">${s.toolMounted}</span>`
+            : nothing}
         </div>
       </div>
       <div class="pill right">
@@ -826,23 +922,124 @@ export class PrinterCard extends LitElement {
     `;
   }
 
-  private renderAms(ams: AmsSlot[] | null): TemplateResult | typeof nothing {
+  private renderAms(ams: AmsUnit[] | null): TemplateResult | typeof nothing {
     if (!ams || ams.length === 0) return nothing;
     return html`
-      <div class="ams-row">
-        ${ams.map(
-          (slot) => html`
-            <div class="ams-chip ${slot.active ? "active" : ""}">
-              <span
-                class="ams-dot"
-                style=${`background:${slot.color ?? "rgba(255,255,255,0.2)"}`}
-              ></span>
-              <span class="ams-label"
-                >${slot.material ?? "–"}${slot.remaining !== null
-                  ? html` <small>${slot.remaining}%</small>`
-                  : nothing}</span
-              >
+      ${ams.map(
+        (unit) => html`
+          <div class="ams-unit">
+            <div class="ams-header">
+              <span>${unit.title}</span>
+              ${unit.humidity !== null
+                ? html`<span class="ams-humidity" title="Luftfeuchtigkeit"
+                    >${unit.humidity}%${unit.humidityLevel !== null
+                      ? html` · ${humidityDots(unit.humidityLevel)}`
+                      : nothing}</span
+                  >`
+                : nothing}
+              ${unit.temperature !== null
+                ? html`<span class="ams-humidity"
+                    >${Math.round(unit.temperature)}°</span
+                  >`
+                : nothing}
             </div>
+            <div class="ams-row">
+              ${unit.slots.map((slot) => {
+                const amount =
+                  slot.gramsLeft !== null
+                    ? `~${slot.gramsLeft} g`
+                    : slot.remain !== null
+                      ? `${slot.remain}%`
+                      : null;
+                const label =
+                  slot.colorName ??
+                  slot.name ??
+                  slot.material ??
+                  (slot.isLoaded ? "?" : "–");
+                return html`
+                  <div
+                    class="ams-chip ${slot.active ? "active" : ""}"
+                    title=${unit.title +
+                    " · " +
+                    slot.label +
+                    (slot.material ? " · " + slot.material : "")}
+                  >
+                    <span
+                      class="ams-dot"
+                      style=${`background:${slot.color ?? "rgba(255,255,255,0.2)"}`}
+                    ></span>
+                    <span class="ams-label"
+                      >${label}${amount
+                        ? html` <small>${amount}</small>`
+                        : nothing}</span
+                    >
+                  </div>
+                `;
+              })}
+            </div>
+          </div>
+        `
+      )}
+      ${this.renderExternalSpool()}
+    `;
+  }
+
+  private renderExternalSpool(): TemplateResult | typeof nothing {
+    const ext = this.status.externalSpool;
+    if (!ext || !ext.isLoaded) return nothing;
+    return html`
+      <div class="ams-row">
+        <div
+          class="ams-chip ${ext.active ? "active" : ""}"
+          title="Externe Rolle"
+        >
+          <span
+            class="ams-dot"
+            style=${`background:${ext.color ?? "rgba(255,255,255,0.2)"}`}
+          ></span>
+          <span class="ams-label"
+            >Ext · ${ext.material ?? "?"}</span
+          >
+        </div>
+      </div>
+    `;
+  }
+
+  private renderIssue(s: PrinterStatus): TemplateResult | typeof nothing {
+    const issue = s.issues?.[0];
+    if (!issue) return nothing;
+    return html`
+      <div class="issue-banner ${issue.severity}" title=${issue.id}>
+        <span class="msg">${issue.message}</span>
+      </div>
+    `;
+  }
+
+  private renderSpeed(s: PrinterStatus): TemplateResult | typeof nothing {
+    if (s.speed === null || !s.wsConnected) return nothing;
+    const options: Array<{ level: 1 | 2 | 3 | 4; label: string }> = [
+      { level: 1, label: "Silent" },
+      { level: 2, label: "Standard" },
+      { level: 3, label: "Sport" },
+      { level: 4, label: "Ludicrous" },
+    ];
+    return html`
+      <div class="speed-row no-drag">
+        ${options.map(
+          (o) => html`
+            <button
+              class="speed-btn ${s.speed === o.level ? "active" : ""}"
+              @click=${() =>
+                this.dispatchEvent(
+                  new CustomEvent("set-speed", {
+                    detail: o.level,
+                    bubbles: true,
+                    composed: true,
+                  })
+                )}
+            >
+              ${o.label}
+            </button>
           `
         )}
       </div>
@@ -922,6 +1119,12 @@ export class PrinterCard extends LitElement {
   private dispatch(name: string): void {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
   }
+}
+
+function humidityDots(level: number): string {
+  // Level: 1 (wet) .. 5 (dry). Show 5 dots filled proportionally from "wet".
+  const dry = Math.max(1, Math.min(5, level));
+  return "●".repeat(dry) + "○".repeat(5 - dry);
 }
 
 function etaText(seconds: number | null): string {

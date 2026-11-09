@@ -6,6 +6,7 @@
 //  * Every other window is a per-printer view (label = printer.id) that owns
 //    its own backend connection, card, and settings overlay.
 
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -219,6 +220,10 @@ async function runPrinterView(id: string): Promise<void> {
   let wasConnected = false;
   let powerDevice: string | null = null;
   let windowHidden = false;
+  /** Only hide after a print ends — never on cold start while already idle. */
+  let sawActivePrint = false;
+  /** Keep the window visible briefly after launch so Settings stay reachable. */
+  const suppressHideUntil = Date.now() + 90_000;
   let lastThumbKey = "";
   let settingsEl: SettingsPanel | null = null;
 
@@ -280,34 +285,53 @@ async function runPrinterView(id: string): Promise<void> {
   async function applyVisibility(status: PrinterStatus): Promise<void> {
     const p = getPrinter(id);
     if (!p) return;
-    if (!p.onlyWhenPrinting) {
-      if (windowHidden) {
-        windowHidden = false;
-        try {
-          await appWindow.show();
-        } catch (err) {
-          console.error(err);
-        }
-      }
-      return;
-    }
-    const active =
-      status.printState === "printing" || status.printState === "paused";
-    if (active && windowHidden) {
+
+    const show = async () => {
+      if (!windowHidden) return;
       windowHidden = false;
       try {
         await appWindow.show();
       } catch (err) {
         console.error(err);
       }
-    } else if (!active && !windowHidden) {
+    };
+    const hide = async () => {
+      if (windowHidden) return;
       windowHidden = true;
       try {
         await appWindow.hide();
       } catch (err) {
         console.error(err);
       }
+    };
+
+    if (!p.onlyWhenPrinting) {
+      await show();
+      return;
     }
+
+    // Never hide while offline — otherwise Settings can't be opened to fix it.
+    if (!status.wsConnected) {
+      await show();
+      return;
+    }
+
+    const active =
+      status.printState === "printing" || status.printState === "paused";
+    if (active) {
+      sawActivePrint = true;
+      await show();
+      return;
+    }
+
+    // Stay visible on cold start / until a print has actually run this session,
+    // and for a short grace period after launch (manual open of the .exe).
+    if (!sawActivePrint || Date.now() < suppressHideUntil) {
+      await show();
+      return;
+    }
+
+    await hide();
   }
 
   async function maybeUpdateThumbnail(status: PrinterStatus): Promise<void> {
@@ -351,6 +375,15 @@ async function runPrinterView(id: string): Promise<void> {
   }
 
   // ---- Card events ----
+  card.addEventListener("set-speed", (e) => {
+    const level = (e as CustomEvent<number>).detail;
+    const b = backend as PrinterBackend & {
+      setSpeed?: (l: 1 | 2 | 3 | 4) => Promise<unknown>;
+    };
+    if (b.setSpeed && (level === 1 || level === 2 || level === 3 || level === 4)) {
+      void b.setSpeed(level).catch(console.error);
+    }
+  });
   const actions: Record<string, () => void> = {
     pause: () => void backend.pause().catch(console.error),
     resume: () => void backend.resume().catch(console.error),
@@ -375,8 +408,37 @@ async function runPrinterView(id: string): Promise<void> {
     },
     startdrag: () => void appWindow.startDragging().catch(console.error),
     "open-settings": openSettings,
-    "close-app": () => void appWindow.close().catch(console.error),
+    "close-app": () => void closePrinterWindow(),
   };
+
+  async function closePrinterWindow(): Promise<void> {
+    // Snapshot other open printer windows before we tear this one down.
+    const others = getConfig().printers.filter((p) => p.id !== id);
+    let anyOtherOpen = false;
+    for (const p of others) {
+      try {
+        if (await WebviewWindow.getByLabel(p.id)) {
+          anyOtherOpen = true;
+          break;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      await appWindow.close();
+    } catch (err) {
+      console.error(err);
+    }
+    // Last card closed via X → quit the whole app (not just hide).
+    if (!anyOtherOpen) {
+      try {
+        await invoke("quit_app");
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
   for (const [name, handler] of Object.entries(actions)) {
     card.addEventListener(name, handler as EventListener);
   }

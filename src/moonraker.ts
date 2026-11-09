@@ -180,10 +180,10 @@ export class MoonrakerClient implements PrinterBackend {
 
   private async handshake(): Promise<void> {
     await this.call("server.connection.identify", {
-      client_name: "orca-widget",
-      version: "0.1.0",
+      client_name: "Glance3D",
+      version: "0.3.0",
       type: "other",
-      url: "https://github.com/BangerTech/Prism-Dashboard",
+      url: "https://github.com/BangerTech/glance3d",
     });
 
     try {
@@ -424,7 +424,16 @@ export class MoonrakerClient implements PrinterBackend {
       caseFan: fanPercent(fan2),
       // Moonraker/Klipper doesn't expose a "substage" or AMS by default.
       stage: null,
+      stageId: null,
       ams: null,
+      externalSpool: null,
+      activeSpoolId: null,
+      speed: null,
+      issues: [],
+      model: null,
+      toolMounted: null,
+      firmware: null,
+      chamberTarget: null,
     };
   }
 }

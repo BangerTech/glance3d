@@ -1,0 +1,96 @@
+// Bambu Lab print stage names (`stg_cur`), German primary, English fallback.
+//
+// Ported from bambu-bar's Sources/Shared/PrinterStatus.swift stageNames /
+// pauseReasons tables (MIT). Same numeric ids ha-bambulab and bambu-bar use.
+//
+// `stg_cur` on the printer report maps to a readable phase of the print job
+// ("Heizt Hotend", "Pausiert: Filament leer", ...). Id 255 / -1 mean "no
+// substage".
+
+const STAGE_DE: Record<number, string> = {
+  0: "Druckt",
+  1: "Auto-Bedleveling",
+  2: "Heizt Heizbett vor",
+  3: "Vibrationskompensation",
+  4: "Wechselt Filament",
+  5: "M400-Pause",
+  6: "Pausiert: Filament leer",
+  7: "Heizt Hotend",
+  8: "Kalibriert Extrusion",
+  9: "Scannt Bettoberfläche",
+  10: "Prüft erste Schicht",
+  11: "Erkennt Druckplatte",
+  12: "Kalibriert Micro Lidar",
+  13: "Fährt Werkzeugkopf home",
+  14: "Reinigt Düsenspitze",
+  15: "Prüft Extrudertemperatur",
+  16: "Pausiert durch Benutzer",
+  17: "Pausiert: Frontabdeckung abgefallen",
+  18: "Kalibriert Micro Lidar",
+  19: "Kalibriert Flow-Ratio",
+  20: "Pausiert: Düsentemperatur-Fehler",
+  21: "Pausiert: Heizbett-Temperaturfehler",
+  22: "Entlädt Filament",
+  23: "Pausiert: Schrittverluste",
+  24: "Lädt Filament",
+  25: "Kalibriert Motorgeräusch",
+  26: "Pausiert: AMS offline",
+  27: "Pausiert: Heatbreak-Lüfter zu langsam",
+  28: "Pausiert: Kammertemperatur-Fehler",
+  29: "Kühlt Kammer",
+  30: "Pausiert durch G-Code",
+  31: "Motor-Noise-Showoff",
+  32: "Pausiert: Düsenverklumpung",
+  33: "Pausiert: Cutter-Fehler",
+  34: "Pausiert: Fehler erste Schicht",
+  35: "Pausiert: Düse verstopft",
+  36: "Misst Bewegungspräzision",
+  37: "Verbessert Bewegungspräzision",
+  38: "Misst Bewegungsgenauigkeit",
+  39: "Kalibriert Düsenoffset",
+  40: "Hochtemperatur-Bedleveling",
+  41: "Prüft Schnellspannhebel",
+  42: "Prüft Tür und Deckel",
+  43: "Kalibriert Laser",
+  44: "Prüft Plattform",
+  45: "Prüft BirdsEye-Kamera",
+  46: "Kalibriert BirdsEye-Kamera",
+  47: "Bedleveling, Phase 1",
+  48: "Bedleveling, Phase 2",
+  49: "Heizt Kammer",
+  50: "Kühlt Heizbett",
+  51: "Druckt Kalibrierlinien",
+  52: "Prüft Material",
+  53: "Kalibriert Live-View-Kamera",
+  54: "Wartet auf Heizbett-Temperatur",
+  55: "Prüft Materialposition",
+  56: "Kalibriert Cutter-Offset",
+  57: "Misst Oberfläche",
+  58: "Thermische Vorkonditionierung",
+  59: "Fährt Klingenhalter home",
+  60: "Kalibriert Kamera-Offset",
+  61: "Kalibriert Klingenhalter",
+  62: "Hotend Pick-and-Place-Test",
+  63: "Wartet auf Kammertemperatur",
+  64: "Bereitet Hotend vor",
+  65: "Kalibriert Verklumpungserkennung",
+  66: "Reinigt Kammerluft",
+  67: "Misst Rotary Attachment",
+  68: "Fährt zum Spülschacht",
+  69: "Kühlt Düse",
+  70: "Zentriert Werkzeugkopf",
+  71: "Arc Fitting",
+  72: "Erkennt Hotend-Typ",
+  73: "Erkennt Druckplatten-Ausrichtung",
+  74: "Prüft Heizbett auf Objekte",
+  75: "Prüft Heizbett-Unterseite",
+  76: "Vor-Extrusion",
+  77: "Bereitet AMS vor",
+};
+
+/** Resolve `stg_cur` to a readable German label. Null when unknown / inactive. */
+export function stageText(stageId: number | null | undefined): string | null {
+  if (stageId === null || stageId === undefined) return null;
+  if (stageId === 255 || stageId === -1) return null;
+  return STAGE_DE[stageId] ?? null;
+}

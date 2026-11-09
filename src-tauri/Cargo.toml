@@ -1,8 +1,8 @@
 [package]
-name = "orca-widget"
-version = "0.2.0"
+name = "glance3d"
+version = "0.3.0"
 description = "Glance3D — Moonraker + Bambu Lab desktop widget"
-authors = ["you"]
+authors = ["BangerTech"]
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2024"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "orca_widget_lib"
+name = "glance3d_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -30,6 +30,8 @@ futures-util = "0.3"
 # we build a rustls client config with a permissive verifier.
 rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }
 rustls = { version = "0.22", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
+x509-parser = "0.16"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

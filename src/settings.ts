@@ -1,6 +1,16 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { invoke } from "@tauri-apps/api/core";
 import type { PrinterInstance, PrinterType } from "./config";
+
+interface DiscoveredPrinter {
+  serial: string;
+  host: string;
+  name: string;
+  model: string;
+  firmware: string;
+  connectMode: string;
+}
 
 export interface SettingsSaveDetail {
   // Per-printer fields.
@@ -44,6 +54,11 @@ export class SettingsPanel extends LitElement {
   @state() private onlyWhenPrinting = false;
   @state() private alwaysOnTop = true;
   @state() private autostart = false;
+
+  // --- Discovery ---
+  @state() private scanning = false;
+  @state() private discovered: DiscoveredPrinter[] = [];
+  @state() private scanError = "";
 
   static styles = css`
     :host {
@@ -273,6 +288,47 @@ export class SettingsPanel extends LitElement {
 
         ${isBambu
           ? html`
+              <div class="add-row">
+                <button
+                  class="mini"
+                  ?disabled=${this.scanning}
+                  @click=${this.scanNetwork}
+                >
+                  ${this.scanning
+                    ? "Suche..."
+                    : "Drucker im Netzwerk suchen"}
+                </button>
+                ${this.scanError
+                  ? html`<span class="hint" style="color:#fca5a5"
+                      >${this.scanError}</span
+                    >`
+                  : nothing}
+              </div>
+              ${this.discovered.length > 0
+                ? html`
+                    <div class="printer-list">
+                      ${this.discovered.map(
+                        (d) => html`
+                          <div class="printer-row">
+                            <div class="meta">
+                              <div>${d.name}</div>
+                              <div class="type">
+                                ${d.model || "?"} · ${d.host} · ${d.serial}
+                              </div>
+                            </div>
+                            <button
+                              class="mini"
+                              @click=${() => this.useDiscovered(d)}
+                            >
+                              Übernehmen
+                            </button>
+                          </div>
+                        `
+                      )}
+                    </div>
+                  `
+                : nothing}
+
               <div class="field">
                 <label>Serial (Bambu)</label>
                 <input
@@ -427,6 +483,33 @@ export class SettingsPanel extends LitElement {
     this.dispatchEvent(
       new CustomEvent("add-printer", { detail: { type } })
     );
+  }
+
+  private scanNetwork = async () => {
+    this.scanning = true;
+    this.scanError = "";
+    try {
+      const list = await invoke<DiscoveredPrinter[]>("discovery_scan", {
+        seconds: 4,
+      });
+      this.discovered = list;
+      if (list.length === 0) {
+        this.scanError =
+          "Keine Drucker gefunden (ist LAN-Modus aktiv? Firewall?)";
+      }
+    } catch (err) {
+      this.scanError = String(err);
+    } finally {
+      this.scanning = false;
+    }
+  };
+
+  private useDiscovered(d: DiscoveredPrinter) {
+    this.host = d.host;
+    this.bambuSerial = d.serial;
+    if (!this.name || this.name === this.printer.name) {
+      this.name = d.name;
+    }
   }
 
   private save = () => {

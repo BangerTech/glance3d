@@ -47,7 +47,9 @@ export interface AppConfig {
 }
 
 const CURRENT_VERSION = 2;
-const STORE_FILE = "orca-widget.json";
+const STORE_FILE = "glance3d.json";
+/** Previous store filename — migrated once into STORE_FILE. */
+const LEGACY_STORE_FILE = "orca-widget.json";
 const CONFIG_KEY = "config";
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -85,10 +87,25 @@ export function defaultPrinter(type: PrinterType = "moonraker"): PrinterInstance
 
 export async function initConfig(): Promise<AppConfig> {
   store = await load(STORE_FILE, { autoSave: true });
-  const raw = (await store.get<any>(CONFIG_KEY)) ?? null;
+  let raw = (await store.get<any>(CONFIG_KEY)) ?? null;
+
+  // One-shot migration from the old orca-widget.json store.
+  if (!raw) {
+    try {
+      const legacy = await load(LEGACY_STORE_FILE, { autoSave: false });
+      raw = (await legacy.get<any>(CONFIG_KEY)) ?? null;
+    } catch {
+      /* no legacy store */
+    }
+  }
+
   cached = normalize(raw);
   if (!raw || raw.version !== CURRENT_VERSION) {
-    // Persist the migrated/normalized version.
+    // Persist the migrated/normalized version under the new filename.
+    await store.set(CONFIG_KEY, cached);
+    await store.save();
+  } else if (!(await store.get(CONFIG_KEY))) {
+    // Copied from legacy store — write into the new file.
     await store.set(CONFIG_KEY, cached);
     await store.save();
   }

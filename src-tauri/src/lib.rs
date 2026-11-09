@@ -1,7 +1,15 @@
 mod bambu;
+mod discovery;
 mod ws;
 
-use tauri::Manager;
+use tauri::{AppHandle, Manager, RunEvent};
+
+/// Fully quit Glance3D (bypasses the ExitRequested keep-alive used while
+/// printer windows are merely hidden for "only while printing").
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -29,8 +37,20 @@ pub fn run() {
             ws::ws_disconnect,
             bambu::bambu_connect,
             bambu::bambu_send,
-            bambu::bambu_disconnect
+            bambu::bambu_disconnect,
+            discovery::discovery_scan,
+            quit_app
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // Keep the process alive when printer windows are closed/hidden so
+        // "only while printing" can show them again. Programmatic quit_app()
+        // still exits (ExitRequested carries an exit code).
+        .build(tauri::generate_context!())
+        .expect("error while building Glance3D")
+        .run(|_app, event| {
+            if let RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

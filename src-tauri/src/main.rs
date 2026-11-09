@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    orca_widget_lib::run()
+    glance3d_lib::run()
 }

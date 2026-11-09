@@ -1,4 +1,4 @@
-# Glance3D (orca-widget)
+# Glance3D
 
 A lightweight, transparent, always-on-top Windows desktop widget for live 3D
 printer status, styled after Home Assistant Prism cards. Each printer runs in
@@ -6,7 +6,7 @@ its own freely placeable window.
 
 Supported backends:
 
-- **Creality / Klipper / Moonraker** over WebSocket JSON-RPC — the same
+- **Creality / Klipper / Moonraker** over WebSocket JSON-RPC � the same
   mechanism OrcaSlicer's `MoonrakerPrinterAgent` uses, so no Home Assistant is
   required.
 - **Bambu Lab** (X1, X1C, H2D, ...) over the printer's local MQTT/TLS protocol
@@ -17,7 +17,7 @@ Reference printers used during development: a rooted Creality K1 Max at
 
 ## Tech stack
 
-- Tauri 2 (Rust shell, WebView2 on Windows) — frameless, transparent,
+- Tauri 2 (Rust shell, WebView2 on Windows) � frameless, transparent,
   always-on-top windows hidden from the taskbar.
 - Vite + TypeScript + Lit 3 (web components) for the UI.
 - Plugins: `tauri-plugin-store` (config), `tauri-plugin-http` (CORS-free
@@ -60,11 +60,11 @@ own window position back into its printer entry.
   'index.html?printer=<id>', ... })`. Each one branches `main.ts` into the
   printer-view path and binds to its own printer entry.
 - Tauri events coordinate changes across windows:
-  - `glance3d:printers-changed` — a printer was added, removed, or edited; the
+  - `glance3d:printers-changed` � a printer was added, removed, or edited; the
     coordinator reconciles its window set.
-  - `glance3d:open-printer` (payload = printer id) — focus or create that
+  - `glance3d:open-printer` (payload = printer id) � focus or create that
     printer's window.
-  - `glance3d:globals-changed` — `alwaysOnTop` / `autostart` toggles were
+  - `glance3d:globals-changed` � `alwaysOnTop` / `autostart` toggles were
     changed; the coordinator and every printer window re-apply them.
 
 ## Moonraker integration
@@ -125,26 +125,107 @@ certificate.
   - Pause/Resume/Stop: `{"print":{"command":"pause"|"resume"|"stop", ...}}`
   - Home: `{"print":{"command":"gcode_line","param":"G28\n", ...}}`
   - Chamber light: `{"system":{"command":"ledctrl","led_node":"chamber_light","led_mode":"on"|"off", ...}}`
-- Status mapping (`src/bambu.ts`):
-  - `print.gcode_state` → `printState` (IDLE/PREPARE/SLICING/RUNNING/PAUSE/FINISH/FAILED)
-  - `mc_percent` → `progress`; `mc_remaining_time` (min) → `etaSeconds`
-  - `nozzle_temper`/`nozzle_target_temper`, `bed_temper`/`bed_target_temper`, `chamber_temper`
-  - `layer_num`/`total_layer_num`
-  - `subtask_name`/`gcode_file` → `filename`
-  - `cooling_fan_speed`/`big_fan1_speed`/`big_fan2_speed` → fan percentages
-    (0..15 gear or 0..100 percent — normalized)
-  - `lights_report[chamber_light]` → `light`
-  - `ams` → `AmsSlot[]` with color / material / active / remaining%
+- Parsing lives in `src/bambu-report.ts` (ported from
+  [rolottr/bambu-bar](https://github.com/rolottr/bambu-bar)'s
+  `ReportParser.swift`, MIT) and in `src/bambu.ts` which owns the socket:
+  - `ReportDocument` merges full `pushall` snapshots with delta reports
+    (arrays keyed by `id`, `lights_report` by `node`) and remembers the
+    firmware module list from `get_version` so AMS type detection works.
+  - On connect we publish `pushall` **and** `get_version`.
+  - Full H3C support via `src/bambu-models.ts`: model catalog with
+    capability flags (`hasChamberSensor`, `chamberHeaterMax`, `hasAuxFan`,
+    `hasChamberFan`, `hasAMSHumidity`, `nozzleCount`, ...), serial-prefix
+    detection (H3C = `N10` / prefix `32X`), and `fitToModel()` to null out
+    readings the model can't produce.
+  - Temperatures prefer the newer `device.extruder.info[]` / `device.bed`
+    / `device.ctc` blocks (packed current + target in 32 bits) and fall
+    back to the flat `nozzle_temper` / `bed_temper` / `chamber_temper`.
+  - Fans use `device.airduct.parts[]` (id bits 4-11 pick part/aux/exhaust/
+    left-aux/chamber) with the legacy `cooling_fan_speed` / `big_fan*`
+    fallback.
+  - `print.gcode_state` -> `printState` (IDLE/PREPARE/SLICING/RUNNING/PAUSE/FINISH/FAILED).
+  - `mc_percent` -> `progress`; `mc_remaining_time` (min) -> `etaSeconds`;
+    `layer_num` / `total_layer_num`; `subtask_name` / `gcode_file` -> filename.
+  - `lights_report[chamber_light]` -> `light`.
+  - `spd_lvl` -> `speed` (1 Silent / 2 Standard / 3 Sport / 4 Ludicrous);
+    the card exposes a selector; the client publishes `print.print_speed`.
+  - `ams` -> grouped `AmsUnit[]`. AMS 3H (`info` nibble 6, 9 slots, spool ids
+    `1024 + slot`), AMS HT (`info` nibble 4, id >= 128), AMS Lite (A1/A1 mini,
+    no humidity sensor), AMS 2 Pro, AMS-B. Per-slot grams-left computed from
+    `tray_weight * remain / 100`; `colorName` and brand/product from the
+    bundled Bambu Studio catalog. Humidity is zone-aware for AMS 3H (dampest
+    zone wins).
+  - External spool from `vir_slot` (or legacy `vt_tray`); active slot from the
+    printing extruder's `snow` else `tray_now`.
+  - H3C tool rack: `device.nozzle.info[]` provides the mounted hotend
+    (type + diameter), surfaced on the card near the nozzle pill.
+  - Stage names (`stg_cur`) resolved to German text via `src/bambu-stages.ts`.
+  - Issues: `hms[]` and `print_error` -> `PrinterIssue[]` via
+    `src/hms-catalog.ts` (bundled German + English texts, English fallback);
+    the user-cancel codes `0300400C` / `0500400E` are skipped.
+
+### Bundled Bambu data
+
+`src/data/` contains the bundled MIT data files (one-off fetch, no runtime
+network):
+
+- `hms_de.json`, `hms_en.json` - HMS + print_error texts, originally from the
+  [ha-bambulab](https://github.com/greghesp/ha-bambulab) project, routed
+  through bambu-bar's `scripts/make-hms.py`.
+- `filaments.json` - Bambu Studio filament presets + Bambu Lab color names,
+  via bambu-bar's `scripts/make-filaments.py`.
+
+Refresh with `node scripts/fetch-bambu-data.mjs` (raw DEFLATE on the HMS
+files; inflated with `zlib.inflateRawSync`).
+
+### TLS
+
+`src-tauri/certs/` bundles Bambu's root CAs (`bambu-ca.pem`, `bambu-n6.pem`,
+`bambu-n7.pem`, `bambu-o1c2.pem`, from bambu-bar's `Resources/Certificates`).
+`src-tauri/src/bambu.rs` replaces the old permissive verifier with
+`BambuVerifier`, which:
+
+1. Extracts the leaf certificate's common name and checks it equals the
+   configured serial (so another Bambu printer on the LAN can't pretend to be
+   this one and collect its access code).
+2. Checks that at least one certificate in the presented chain was issued by
+   one of the bundled Bambu CAs (by Distinguished Name).
+
+Signature verification isn't performed (the printer's signing hierarchy mixes
+with its own self-signed device certs), but DN+CN validation is a meaningful
+step up from "accept anything" for a LAN printer. A compile-time
+`INSECURE_FALLBACK` constant can switch back to permissive mode for
+emulator testing.
+
+### Discovery (UDP 2021)
+
+`src-tauri/src/discovery.rs` sends an `M-SEARCH` on UDP multicast
+`239.255.255.250:{2021,1990}` and the local broadcast, listens for the SSDP
+replies for a few seconds, and returns `{serial, host, name, model, firmware,
+connectMode}` entries de-duplicated by serial. The Bambu section of
+`src/settings.ts` ships a "Drucker im Netzwerk suchen" button that fills
+host/serial/model directly into the add-printer form. Exposed as the
+`discovery_scan(seconds)` Tauri command.
 
 Camera (RTSP on X1/H2D at `rtsps://bblp:<code>@<ip>:322/streaming/live/1`) is
 not yet implemented; WebView2 can't play RTSP directly, so this will ship as a
 bundled ffmpeg sidecar in a later release.
 
+## Attribution
+
+Protocol logic and bundled data for the Bambu Lab path are adopted from
+[rolottr/bambu-bar](https://github.com/rolottr/bambu-bar) (MIT, by NINA LABS),
+which in turn draws HMS texts and the device CAs from
+[ha-bambulab](https://github.com/greghesp/ha-bambulab) (MIT) and Bambu Studio.
+See the file headers in `src/bambu-report.ts`, `src/bambu-models.ts`,
+`src/bambu-stages.ts`, `src/hms-catalog.ts`, `src/filament-catalog.ts` and
+`src-tauri/src/bambu.rs` for per-file attribution.
+
 ## Data model (not a database)
 
 This project has no SQL database. The config is a plugin-store JSON file.
 
-### Persisted config (`orca-widget.json`, plugin-store, key `config`)
+### Persisted config (`glance3d.json`, plugin-store, key `config`)
 
 ```ts
 interface AppConfig {
@@ -175,9 +256,14 @@ launch into one `moonraker` entry named "Creality Printer".
 
 `wsConnected`, `klippy`, `printState`, `filename`, `progress` (0..1),
 `nozzleTemp`/`nozzleTarget`, `bedTemp`/`bedTarget`, `chamberTemp`,
-`currentLayer`/`totalLayers`, `printDuration`/`totalDuration`, `etaSeconds`,
-`light`, `filamentDetected`, `modelFan`/`auxFan`/`caseFan`, `stage` (Bambu),
-`ams` (`AmsSlot[] | null`, Bambu).
+`chamberTarget`, `currentLayer`/`totalLayers`,
+`printDuration`/`totalDuration`, `etaSeconds`, `light`, `filamentDetected`,
+`modelFan`/`auxFan`/`caseFan`, `stage`/`stageId` (Bambu),
+`ams` (`AmsUnit[] | null`, grouped with per-unit humidity/temperature; each
+slot carries color + name + grams-left + Bambu colorName + active flag),
+`externalSpool`, `activeSpoolId`, `speed` (1..4, Bambu), `issues`
+(`PrinterIssue[]`, Bambu HMS + print_error), `model` (`{code,name}`),
+`toolMounted` (H3C rack hotend), `firmware`.
 
 ## Window behavior
 
@@ -187,6 +273,12 @@ launch into one `moonraker` entry named "Creality Printer".
 - Position is persisted (debounced) and restored on launch per printer.
 - Click-through toggle: global shortcut `Ctrl+Alt+P` toggles
   `setIgnoreCursorEvents` on every printer window.
+- `onlyWhenPrinting`: never hides while offline; stays visible on cold start
+  until a print has actually run (and for ~90s after launch) so opening the
+  `.exe` does not immediately vanish when the printer is idle. After a print
+  ends, the window hides until the next job. A keep-alive on `ExitRequested`
+  keeps the coordinator alive while windows are hidden; closing the last card
+  via X calls `quit_app`.
 
 ## Develop / build
 
@@ -203,9 +295,12 @@ Windows 11).
 
 After `npm run tauri build`:
 
-- `src-tauri/target/release/orca-widget.exe` — portable executable
-- `src-tauri/target/release/bundle/nsis/Orca Widget_0.1.0_x64-setup.exe` — NSIS installer (~2.9 MiB)
-- `src-tauri/target/release/bundle/msi/Orca Widget_0.1.0_x64_en-US.msi` — MSI (~4.1 MiB)
+- `src-tauri/target/release/glance3d.exe` - portable executable
+- `src-tauri/target/release/bundle/nsis/Glance3D_0.3.0_x64-setup.exe` - NSIS installer
+- `src-tauri/target/release/bundle/msi/Glance3D_0.3.0_x64_en-US.msi` - MSI
+
+`npm test` runs the Bambu parser tests against the committed emulator
+fixtures (`src/__tests__/fixtures/*.json`, copied from bambu-bar).
 
 ## Troubleshooting
 
